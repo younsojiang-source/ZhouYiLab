@@ -467,6 +467,13 @@ export namespace ZhouYi::ZiWei {
                 Scope::Yearly
             );
 
+        auto liu_yue_stars =
+            get_horoscope_stars(
+                liu_yue.tian_gan,
+                liu_yue.di_zhi,
+                Scope::Monthly
+            );
+
         return HoroscopeResult{
             .da_xian = current_da_xian,
             .xiao_xian = xiao_xian,
@@ -476,7 +483,7 @@ export namespace ZhouYi::ZiWei {
             .liu_shi = liu_shi,
             .da_xian_stars = da_xian_stars,
             .liu_nian_stars = liu_nian_stars,
-            .liu_yue_stars = empty_stars,
+            .liu_yue_stars = liu_yue_stars,
             .liu_ri_stars = empty_stars,
             .liu_shi_stars = empty_stars
         };

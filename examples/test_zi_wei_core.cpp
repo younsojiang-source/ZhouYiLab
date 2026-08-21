@@ -1431,13 +1431,47 @@ int main() {
             ++failed;
         }
 
+        auto monthly_stars =
+            get_horoscope_stars(
+                ZhouYi::GanZhi::TianGan::Jia,
+                ZhouYi::GanZhi::DiZhi::Zi,
+                Scope::Monthly
+            );
+
+        auto has_monthly_star =
+            [&](int gong_index, const string& star_name) {
+                const auto& stars =
+                    monthly_stars.at(gong_index).stars;
+
+                return std::find(
+                    stars.begin(),
+                    stars.end(),
+                    star_name
+                ) != stars.end();
+            };
+
+        bool monthly_ok =
+            has_monthly_star(11, "月魁") &&
+            has_monthly_star(5,  "月钺") &&
+            has_monthly_star(0,  "月禄") &&
+            has_monthly_star(1,  "月羊") &&
+            has_monthly_star(11, "月陀") &&
+            has_monthly_star(1,  "月鸾") &&
+            has_monthly_star(7,  "月喜");
+
+        cout << (monthly_ok ? "[PASS] " : "[FAIL] ")
+             << "甲子流月动态流耀：魁钺禄羊陀鸾喜位置正确\n";
+
+        if (!monthly_ok) {
+            ++failed;
+        }
+
         bool suppressed_ok =
-            no_unverified_stars(Scope::Monthly) &&
             no_unverified_stars(Scope::Daily) &&
             no_unverified_stars(Scope::Hourly);
 
         cout << (suppressed_ok ? "[PASS] " : "[FAIL] ")
-             << "未审定的月/日/时动态流耀保持为空\n";
+             << "未审定的流日/流时动态流耀保持为空\n";
 
         if (!suppressed_ok) {
             ++failed;

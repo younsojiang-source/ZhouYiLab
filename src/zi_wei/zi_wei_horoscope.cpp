@@ -469,9 +469,34 @@ namespace ZhouYi::ZiWei {
                 break;
             }
 
-            case Scope::Monthly:
-                // 流月流耀规则尚未审定。
+            case Scope::Monthly: {
+                // 流月层先启用可由流月干支直接映射的审定子集：
+                // 月魁、月钺、月禄、月羊、月陀、月鸾、月喜。
+                //
+                // 月昌/月曲需要独立流月规则，不能直接复用本命时支昌曲；
+                // 月马、月解亦暂不在此层生成。
+                auto [kui_idx, yue_idx] =
+                    get_kui_yue_index(gan);
+
+                int lu_idx =
+                    get_lu_cun_index(gan);
+
+                auto [yang_idx, tuo_idx] =
+                    get_yang_tuo_index(lu_idx);
+
+                auto [hong_luan_idx, tian_xi_idx] =
+                    get_hong_luan_tian_xi_index(zhi);
+
+                result[kui_idx].stars.push_back("月魁");
+                result[yue_idx].stars.push_back("月钺");
+                result[lu_idx].stars.push_back("月禄");
+                result[yang_idx].stars.push_back("月羊");
+                result[tuo_idx].stars.push_back("月陀");
+                result[hong_luan_idx].stars.push_back("月鸾");
+                result[tian_xi_idx].stars.push_back("月喜");
+
                 break;
+            }
 
             case Scope::Daily:
                 // 流日流耀规则尚未审定。

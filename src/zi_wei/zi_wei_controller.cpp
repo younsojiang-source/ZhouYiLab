@@ -1890,7 +1890,7 @@ namespace ZhouYi::ZiWei {
             },
             {
                 "empty_dynamic_star_array",
-                "必须结合 dynamic_stars.status 解读；unverified_not_enabled 不代表实际无星"
+                "必须结合 dynamic_stars.status 解读；未启用作用域的空数组不代表实际无星"
             },
             {
                 "fei_hua_self_relation",
@@ -1935,10 +1935,25 @@ namespace ZhouYi::ZiWei {
             {
                 "monthly",
                 {
-                    {"status", "unverified_not_enabled"},
+                    {"status", "enabled_verified_subset"},
+                    {
+                        "stars",
+                        {
+                            "月魁", "月钺",
+                            "月禄", "月羊", "月陀",
+                            "月鸾", "月喜"
+                        }
+                    },
+                    {
+                        "not_enabled",
+                        {
+                            "月昌", "月曲",
+                            "月马", "月解"
+                        }
+                    },
                     {
                         "note",
-                        "尚未审定独立流月动态流耀规则"
+                        "当前仅启用由流月干支直接映射的审定子集"
                     }
                 }
             },
@@ -2373,7 +2388,9 @@ namespace ZhouYi::ZiWei {
                         },
                         {
                             "liu_yue",
-                            json::array()
+                            dynamic_stars_to_json(
+                                base.liu_yue_stars
+                            )
                         },
                         {
                             "liu_ri",
