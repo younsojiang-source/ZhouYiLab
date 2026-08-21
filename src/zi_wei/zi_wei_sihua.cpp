@@ -128,7 +128,42 @@ namespace ZhouYi::ZiWei {
         return result;
     }
 
-    optional<SiHua> get_star_si_hua_type(TianGan gan, ZhuXing star) {
+
+/**
+ * @brief 获取完整十天干四化星名
+ * @return 顺序固定为：禄、权、科、忌
+ *
+ * 使用字符串是因为四化星既可能是主星 ZhuXing，
+ * 也可能是辅星，如文昌、文曲、左辅、右弼。
+ */
+array<string, 4> get_si_hua_star_names(TianGan gan) {
+    switch (gan) {
+        case TianGan::Jia:
+            return {"廉贞", "破军", "武曲", "太阳"};
+        case TianGan::Yi:
+            return {"天机", "天梁", "紫微", "太阴"};
+        case TianGan::Bing:
+            return {"天同", "天机", "文昌", "廉贞"};
+        case TianGan::Ding:
+            return {"太阴", "天同", "天机", "巨门"};
+        case TianGan::Wu:
+            return {"贪狼", "太阴", "右弼", "天机"};
+        case TianGan::Ji:
+            return {"武曲", "贪狼", "天梁", "文曲"};
+        case TianGan::Geng:
+            return {"太阳", "武曲", "太阴", "天同"};
+        case TianGan::Xin:
+            return {"巨门", "太阳", "文曲", "文昌"};
+        case TianGan::Ren:
+            return {"天梁", "紫微", "左辅", "武曲"};
+        case TianGan::Gui:
+            return {"破军", "巨门", "太阴", "贪狼"};
+    }
+
+    return {"", "", "", ""};
+}
+
+optional<SiHua> get_star_si_hua_type(TianGan gan, ZhuXing star) {
         auto si_hua_stars = get_si_hua_stars(gan);
         
         for (size_t i = 0; i < 4; ++i) {
@@ -157,12 +192,14 @@ namespace ZhouYi::ZiWei {
             gong_gan_si_hua_[i].gong_index = i;
             gong_gan_si_hua_[i].gong_gan = gan;
             
-            // 获取该天干的四化星
-            auto si_hua_stars = get_si_hua_stars(gan);
-            
+            // 获取该天干完整四化星名（禄、权、科、忌）
+            auto si_hua_star_names = get_si_hua_star_names(gan);
+
             // 查找四化星所在的宫位
             for (int si_hua_idx = 0; si_hua_idx < 4; ++si_hua_idx) {
-                if (!si_hua_stars[si_hua_idx].has_value()) {
+                const string& star_name = si_hua_star_names[si_hua_idx];
+
+                if (star_name.empty()) {
                     gong_gan_si_hua_[i].si_hua_list[si_hua_idx] = SiHuaInfo{
                         .type = static_cast<SiHua>(si_hua_idx),
                         .star_name = "",
@@ -170,9 +207,6 @@ namespace ZhouYi::ZiWei {
                     };
                     continue;
                 }
-                
-                auto star = si_hua_stars[si_hua_idx].value();
-                string star_name = string(to_zh(star));
                 
                 // 在12个宫位中查找该星
                 int star_gong = -1;
@@ -306,13 +340,26 @@ namespace ZhouYi::ZiWei {
         SiHua si_hua_type,
         int max_depth
     ) const {
+        if (max_depth < 1) {
+            throw invalid_argument("飞化链最大深度必须在1到4之间");
+        }
+
+        start_gong = fix_index(start_gong);
+        max_depth = min(max_depth, 4);
+
         vector<FeiHuaChain> result;
         vector<FeiHuaRelation> current_chain;
         set<int> visited;
-        
-        max_depth = min(max_depth, 4);  // 最多4层
-        
-        find_chains_recursive(start_gong, si_hua_type, 0, max_depth, current_chain, visited, result);
+
+        find_chains_recursive(
+            start_gong,
+            si_hua_type,
+            0,
+            max_depth,
+            current_chain,
+            visited,
+            result
+        );
         
         return result;
     }

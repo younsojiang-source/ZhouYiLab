@@ -4,6 +4,7 @@ export module ZhouYi.ZiWei.Horoscope;
 import std;
 import ZhouYi.GanZhi;
 import ZhouYi.ZiWei.Constants;
+import ZhouYi.ZiWei.Palace;
 import ZhouYi.ZiWei.Star;
 import ZhouYi.ZhMapper;
 
@@ -124,7 +125,8 @@ export namespace ZhouYi::ZiWei {
         int ming_index,
         WuXingJu wu_xing_ju,
         bool is_male,
-        DiZhi year_zhi
+        DiZhi year_zhi,
+        const vector<GongWeiData>& palaces
     );
 
     /**
@@ -174,10 +176,12 @@ export namespace ZhouYi::ZiWei {
     LiuYueData get_liu_yue(
         int lunar_month,
         int birth_month,
-        TianGan month_gan,
-        DiZhi month_zhi,
+        DiZhi birth_hour_zhi,
+        TianGan year_gan,
         DiZhi year_zhi,
-        int ming_index
+        LiuYueGanZhiPolicy gan_zhi_policy,
+        TianGan solar_term_month_gan,
+        DiZhi solar_term_month_zhi
     );
 
     /**
@@ -232,7 +236,7 @@ export namespace ZhouYi::ZiWei {
      * @brief 综合运限结果
      */
     struct HoroscopeResult {
-        DaXianData da_xian;              // 大限
+        optional<DaXianData> da_xian;    // 当前大限；尚未起运时为空
         XiaoXianData xiao_xian;          // 小限
         LiuNianData liu_nian;            // 流年
         LiuYueData liu_yue;              // 流月

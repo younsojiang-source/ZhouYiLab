@@ -3,12 +3,16 @@ module ZhouYi.ZiWei.Horoscope;
 
 import ZhouYi.GanZhi;
 import ZhouYi.ZiWei.Constants;
+import ZhouYi.ZiWei.Palace;
 import ZhouYi.ZiWei.Star;
+import ZhouYi.ZiWei.SiHua;
 import fmt;
 import std;
 import ZhouYi.ZhMapper;
 
 namespace ZhouYi::ZiWei {
+
+
     using namespace std;
     using namespace ZhouYi::GanZhi;
     using namespace ZhouYi::Mapper;
@@ -60,8 +64,13 @@ namespace ZhouYi::ZiWei {
     }
 
     string HoroscopeResult::to_string() const {
+        string da_xian_text =
+            da_xian.has_value()
+                ? da_xian->to_string()
+                : "大限：尚未起运";
+
         return fmt::format("{}\n{}\n{}\n{}\n{}\n{}",
-            da_xian.to_string(),
+            da_xian_text,
             xiao_xian.to_string(),
             liu_nian.to_string(),
             liu_yue.to_string(),
@@ -82,7 +91,8 @@ namespace ZhouYi::ZiWei {
         int ming_index,
         WuXingJu wu_xing_ju,
         bool is_male,
-        DiZhi year_zhi
+        DiZhi year_zhi,
+        const vector<GongWeiData>& palaces
     ) {
         array<DaXianData, 12> result{};
         
@@ -99,28 +109,29 @@ namespace ZhouYi::ZiWei {
             int start_age = qi_yun_age + 10 * i;
             int end_age = start_age + 9;
             
-            // 计算大限天干（从甲开始，根据流转方向递增或递减）
-            int gan_offset = shun_xing ? i : -i;
-            int gan_idx = (gan_offset + 10) % 10;
-            TianGan start_gan = static_cast<TianGan>(gan_idx);
+            // 大限干支直接采用所行本命宫的宫干、宫支
+            const auto& palace = palaces[idx];
+            TianGan start_gan = palace.tian_gan;
+            DiZhi start_zhi = palace.di_zhi;
             
             result[idx] = DaXianData{
                 .start_age = start_age,
                 .end_age = end_age,
                 .gong_index = idx,
                 .tian_gan = start_gan,
-                .di_zhi = static_cast<DiZhi>(idx),
+                .di_zhi = start_zhi,
                 .si_hua = {}  // 需要根据大限天干获取四化
             };
             
             // 获取大限四化
-            auto si_hua_map = get_si_hua_table(start_gan);
+            auto si_hua_map = get_si_hua_star_names(start_gan);
             int si_hua_idx = 0;
-            for (const auto& [star, si_hua_type] : si_hua_map) {
-                if (si_hua_idx < 4) {
-                    result[idx].si_hua[si_hua_idx++] = string(to_zh(star));
-                }
-            }
+    for (const auto& star_name : si_hua_map) {
+        if (si_hua_idx >= 0 && si_hua_idx < 4) {
+            result[idx].si_hua[si_hua_idx] = star_name;
+        }
+        si_hua_idx++;
+    }
         }
         
         return result;
@@ -131,35 +142,53 @@ namespace ZhouYi::ZiWei {
     /**
      * @brief 获取小限宫位
      * 
-     * 口诀：
-     * 小限从寅宫起1岁，阳男阴女顺行，
-     * 阴男阳女逆行，每岁一宫。
-     * 
-     * 童限特殊规则（1-6岁）：
-     * 一命二财三疾厄，四岁夫妻五福德，
-     * 六岁事业为童限，专就宫垣视吉凶。
+     * 常用小限起法：
+     * 寅午戌年生，1岁起辰宫；
+     * 申子辰年生，1岁起戌宫；
+     * 巳酉丑年生，1岁起未宫；
+     * 亥卯未年生，1岁起丑宫。
+     * 男命顺行，女命逆行，每虚岁一宫。
      */
     XiaoXianData get_xiao_xian(int age, bool is_male, DiZhi year_zhi) {
-        // 童限特殊处理（1-6岁）
-        if (age >= 1 && age <= 6) {
-            // 命宫、财帛、疾厄、夫妻、福德、官禄
-            constexpr array<int, 6> tong_xian_gong = {0, 1, 8, 3, 10, 6};
-            return XiaoXianData{
-                .age = age,
-                .gong_index = tong_xian_gong[age - 1]
-            };
+        // 小限按出生年支三合组确定一岁起宫：
+        // 寅午戌 -> 辰
+        // 申子辰 -> 戌
+        // 巳酉丑 -> 未
+        // 亥卯未 -> 丑
+        // 男顺女逆，每虚岁一宫。
+        int start_index = 0;
+
+        switch (year_zhi) {
+            case DiZhi::Yin:
+            case DiZhi::Wu:
+            case DiZhi::Xu:
+                start_index = 2;   // 辰
+                break;
+
+            case DiZhi::Shen:
+            case DiZhi::Zi:
+            case DiZhi::Chen:
+                start_index = 8;   // 戌
+                break;
+
+            case DiZhi::Si:
+            case DiZhi::You:
+            case DiZhi::Chou:
+                start_index = 5;   // 未
+                break;
+
+            case DiZhi::Hai:
+            case DiZhi::Mao:
+            case DiZhi::Wei:
+                start_index = 11;  // 丑
+                break;
         }
-        
-        // 正常小限计算
-        int zhi_idx = static_cast<int>(year_zhi);
-        bool yang_zhi = (zhi_idx % 2 == 0);
-        bool shun_xing = (is_male == yang_zhi);
-        
-        // 从寅宫（索引0）起1岁
-        int xiao_xian_index = shun_xing 
-            ? fix_index(0 + (age - 1)) 
-            : fix_index(0 - (age - 1));
-        
+
+        int offset = age - 1;
+        int xiao_xian_index = is_male
+            ? fix_index(start_index + offset)
+            : fix_index(start_index - offset);
+
         return XiaoXianData{
             .age = age,
             .gong_index = xiao_xian_index
@@ -185,14 +214,15 @@ namespace ZhouYi::ZiWei {
         int liu_nian_index = (zhi_idx + 10) % 12;  // 子=10, 丑=11, 寅=0...
         
         // 获取流年四化
-        auto si_hua_map = get_si_hua_table(year_gan);
+        auto si_hua_map = get_si_hua_star_names(year_gan);
         array<string, 4> si_hua = {};
         int si_hua_idx = 0;
-        for (const auto& [star, si_hua_type] : si_hua_map) {
-            if (si_hua_idx < 4) {
-                si_hua[si_hua_idx++] = string(to_zh(star));
-            }
+    for (const auto& star_name : si_hua_map) {
+        if (si_hua_idx >= 0 && si_hua_idx < 4) {
+            si_hua[si_hua_idx] = star_name;
         }
+        si_hua_idx++;
+    }
         
         return LiuNianData{
             .year = year,
@@ -215,29 +245,60 @@ namespace ZhouYi::ZiWei {
     LiuYueData get_liu_yue(
         int lunar_month,
         int birth_month,
-        TianGan month_gan,
-        DiZhi month_zhi,
+        DiZhi birth_hour_zhi,
+        TianGan year_gan,
         DiZhi year_zhi,
-        int ming_index
+        LiuYueGanZhiPolicy gan_zhi_policy,
+        TianGan solar_term_month_gan,
+        DiZhi solar_term_month_zhi
     ) {
         int year_zhi_idx = static_cast<int>(year_zhi);
         int liu_nian_index = (year_zhi_idx + 10) % 12;
         
-        // 从流年宫位逆数到生月
-        int birth_month_index = fix_index(liu_nian_index - (birth_month - 1));
+        // 斗君：
+        // 从流年太岁宫起正月，逆数至出生月；
+        // 再从该宫起子时，顺数至出生时辰，所得为流年斗君（流月正月宫）。
+        int normalized_birth_month = std::abs(birth_month);
+        int normalized_lunar_month = std::abs(lunar_month);
+        int birth_hour_index = static_cast<int>(birth_hour_zhi);
+
+        int dou_jun_index = fix_index(
+            liu_nian_index
+            - (normalized_birth_month - 1)
+            + birth_hour_index
+        );
+
+        // 从斗君宫起正月，顺数到当前农历月
+        int liu_yue_index = fix_index(
+            dou_jun_index + (normalized_lunar_month - 1)
+        );
         
-        // 从生月宫位顺数到当前月
-        int liu_yue_index = fix_index(birth_month_index + (lunar_month - 1));
-        
-        // 获取流月四化
-        auto si_hua_map = get_si_hua_table(month_gan);
+        // 明确决定流月干支来源：
+        // 1. 农历流月 + 五虎遁
+        // 2. tyme 节令月柱
+        TianGan month_gan;
+        DiZhi month_zhi;
+
+        if (gan_zhi_policy == LiuYueGanZhiPolicy::LunarMonthWuHuDun) {
+            auto lunar_gan_zhi =
+                get_lunar_month_gan_zhi(year_gan, normalized_lunar_month);
+            month_gan = lunar_gan_zhi.first;
+            month_zhi = lunar_gan_zhi.second;
+        } else {
+            month_gan = solar_term_month_gan;
+            month_zhi = solar_term_month_zhi;
+        }
+
+        // 流月四化严格跟最终选定的流月天干
+        auto si_hua_map = get_si_hua_star_names(month_gan);
         array<string, 4> si_hua = {};
         int si_hua_idx = 0;
-        for (const auto& [star, si_hua_type] : si_hua_map) {
-            if (si_hua_idx < 4) {
-                si_hua[si_hua_idx++] = string(to_zh(star));
-            }
+    for (const auto& star_name : si_hua_map) {
+        if (si_hua_idx >= 0 && si_hua_idx < 4) {
+            si_hua[si_hua_idx] = star_name;
         }
+        si_hua_idx++;
+    }
         
         return LiuYueData{
             .month = lunar_month,
@@ -265,14 +326,15 @@ namespace ZhouYi::ZiWei {
         int liu_ri_index = fix_index(liu_yue_index + (lunar_day - 1));
         
         // 获取流日四化
-        auto si_hua_map = get_si_hua_table(day_gan);
+        auto si_hua_map = get_si_hua_star_names(day_gan);
         array<string, 4> si_hua = {};
         int si_hua_idx = 0;
-        for (const auto& [star, si_hua_type] : si_hua_map) {
-            if (si_hua_idx < 4) {
-                si_hua[si_hua_idx++] = string(to_zh(star));
-            }
+    for (const auto& star_name : si_hua_map) {
+        if (si_hua_idx >= 0 && si_hua_idx < 4) {
+            si_hua[si_hua_idx] = star_name;
         }
+        si_hua_idx++;
+    }
         
         return LiuRiData{
             .day = lunar_day,
@@ -300,14 +362,15 @@ namespace ZhouYi::ZiWei {
         int liu_shi_index = fix_index(liu_ri_index + hour_idx);
         
         // 获取流时四化
-        auto si_hua_map = get_si_hua_table(hour_gan);
+        auto si_hua_map = get_si_hua_star_names(hour_gan);
         array<string, 4> si_hua = {};
         int si_hua_idx = 0;
-        for (const auto& [star, si_hua_type] : si_hua_map) {
-            if (si_hua_idx < 4) {
-                si_hua[si_hua_idx++] = string(to_zh(star));
-            }
+    for (const auto& star_name : si_hua_map) {
+        if (si_hua_idx >= 0 && si_hua_idx < 4) {
+            si_hua[si_hua_idx] = star_name;
         }
+        si_hua_idx++;
+    }
         
         return LiuShiData{
             .shi_chen = hour_zhi,
@@ -331,69 +394,95 @@ namespace ZhouYi::ZiWei {
         Scope scope
     ) {
         array<HoroscopeStarData, 12> result{};
-        
-        // 初始化每个宫位的星耀列表
+
         for (int i = 0; i < 12; ++i) {
             result[i].gong_index = i;
             result[i].stars = {};
         }
-        
-        // 获取各种星耀的位置
-        auto [kui_idx, yue_idx] = get_kui_yue_index(gan);
-        auto [chang_idx, qu_idx] = get_chang_qu_index(zhi);
-        int lu_idx = get_lu_cun_index(gan);
-        auto [yang_idx, tuo_idx] = get_yang_tuo_index(lu_idx);
-        auto [hong_luan_idx, tian_xi_idx] = get_hong_luan_tian_xi_index(zhi);
-        
-        // 天马索引（按地支）
-        int ma_idx = 0;
-        if (zhi == DiZhi::Yin || zhi == DiZhi::Wu || zhi == DiZhi::Xu) {
-            ma_idx = 6; // 申
-        } else if (zhi == DiZhi::Shen || zhi == DiZhi::Zi || zhi == DiZhi::Chen) {
-            ma_idx = 0; // 寅
-        } else if (zhi == DiZhi::Si || zhi == DiZhi::You || zhi == DiZhi::Chou) {
-            ma_idx = 9; // 亥
-        } else { // 亥卯未
-            ma_idx = 3; // 巳
-        }
-        
-        // 根据作用域确定星耀前缀
-        string prefix;
+
         switch (scope) {
             case Scope::Origin:
-                prefix = "";
+                // 本命星曜已经由 ZiWeiResult::palaces 保存，
+                // 不在运限流耀系统中重复生成。
                 break;
-            case Scope::Decadal:
-                prefix = "运";
+
+            case Scope::Decadal: {
+                // 大限层仅启用可直接由大限干支映射的流耀。
+                // 运昌/运曲尚无独立且已审定的算法，因此暂不生成。
+                // 年解属于流年层，不放入大限。
+                auto [kui_idx, yue_idx] =
+                    get_kui_yue_index(gan);
+
+                int lu_idx =
+                    get_lu_cun_index(gan);
+
+                auto [yang_idx, tuo_idx] =
+                    get_yang_tuo_index(lu_idx);
+
+                auto [hong_luan_idx, tian_xi_idx] =
+                    get_hong_luan_tian_xi_index(zhi);
+
+                int ma_idx =
+                    get_tian_ma_index(zhi);
+
+                result[kui_idx].stars.push_back("运魁");
+                result[yue_idx].stars.push_back("运钺");
+                result[lu_idx].stars.push_back("运禄");
+                result[yang_idx].stars.push_back("运羊");
+                result[tuo_idx].stars.push_back("运陀");
+                result[ma_idx].stars.push_back("运马");
+                result[hong_luan_idx].stars.push_back("运鸾");
+                result[tian_xi_idx].stars.push_back("运喜");
                 break;
-            case Scope::Yearly:
-                prefix = "流";
-                // 流年还有年解
-                result[get_nian_jie_index(zhi)].stars.push_back("年解");
+            }
+
+            case Scope::Yearly: {
+                // 以下 helper 本身明确按年干/年支起星，
+                // 因而只有流年层与当前 API 语义严格匹配。
+                auto [kui_idx, yue_idx] =
+                    get_kui_yue_index(gan);
+
+                int lu_idx =
+                    get_lu_cun_index(gan);
+
+                auto [yang_idx, tuo_idx] =
+                    get_yang_tuo_index(lu_idx);
+
+                auto [hong_luan_idx, tian_xi_idx] =
+                    get_hong_luan_tian_xi_index(zhi);
+
+                int ma_idx =
+                    get_tian_ma_index(zhi);
+
+                result[kui_idx].stars.push_back("流魁");
+                result[yue_idx].stars.push_back("流钺");
+                result[lu_idx].stars.push_back("流禄");
+                result[yang_idx].stars.push_back("流羊");
+                result[tuo_idx].stars.push_back("流陀");
+                result[ma_idx].stars.push_back("流马");
+                result[hong_luan_idx].stars.push_back("流鸾");
+                result[tian_xi_idx].stars.push_back("流喜");
+
+                result[get_nian_jie_index(zhi)]
+                    .stars.push_back("年解");
+
                 break;
+            }
+
             case Scope::Monthly:
-                prefix = "月";
+                // 流月流耀规则尚未审定。
                 break;
+
             case Scope::Daily:
-                prefix = "日";
+                // 流日流耀规则尚未审定。
                 break;
+
             case Scope::Hourly:
-                prefix = "时";
+                // 本命文昌文曲按时支安置，不等同于已审定的流时昌曲规则。
+                // 在独立规则确认前保持为空。
                 break;
         }
-        
-        // 添加流耀星
-        result[kui_idx].stars.push_back(prefix + "魁");
-        result[yue_idx].stars.push_back(prefix + "钺");
-        result[chang_idx].stars.push_back(prefix + "昌");
-        result[qu_idx].stars.push_back(prefix + "曲");
-        result[lu_idx].stars.push_back(prefix + "禄");
-        result[yang_idx].stars.push_back(prefix + "羊");
-        result[tuo_idx].stars.push_back(prefix + "陀");
-        result[ma_idx].stars.push_back(prefix + "马");
-        result[hong_luan_idx].stars.push_back(prefix + "鸾");
-        result[tian_xi_idx].stars.push_back(prefix + "喜");
-        
+
         return result;
     }
 

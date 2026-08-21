@@ -199,6 +199,7 @@ export namespace ZhouYi::ZiWei {
      * @return 四化星数组（禄权科忌顺序）
      */
     array<optional<ZhuXing>, 4> get_si_hua_stars(TianGan gan);
+array<string, 4> get_si_hua_star_names(TianGan gan);
 
     /**
      * @brief 判断某星在指定天干下的四化类型

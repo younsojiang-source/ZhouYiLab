@@ -40,6 +40,228 @@ export namespace ZhouYi::ZiWei {
     };
 
     /**
+     * @brief 紫微斗数闰月处理策略
+     *
+     * 不同流派对闰月处理不同，因此显式保留策略，
+     * 避免把 tyme 的负数月份编码直接混入安宫算法。
+     */
+    enum class LeapMonthPolicy {
+        SameAsRegularMonth = 0,  // 闰五月按五月
+        NextMonth,               // 闰五月整体按六月
+        SplitAtDay15             // 初一~十五按五月，十六日起按六月
+    };
+
+    /**
+     * @brief 紫微运限流年的换年边界
+     *
+     * LunarNewYear: 农历正月初一换流年
+     * LiChun:       立春换流年
+     */
+    /**
+     * @brief 子时换日策略
+     *
+     * Midnight:
+     *   00:00 换日，23:00~23:59 仍按当天。
+     *
+     * LateZi:
+     *   23:00 起，紫微本命日期相关算法按次日处理。
+     */
+    enum class ZiHourDayBoundaryPolicy {
+        Midnight = 0,
+        LateZi
+    };
+
+    /**
+     * @brief 火星铃星安置策略
+     *
+     * YearBranchStartBothForward:
+     *   按生年支三合组确定火星、铃星子时起点，
+     *   两星均随时支顺行。
+     */
+    enum class HuoLingPolicy {
+        YearBranchStartBothForward = 0
+    };
+
+    /**
+     * @brief 十四主星亮度表策略
+     *
+     * ZhouYiLabBuiltinV1:
+     *   使用当前 ZhouYiLab 内置的 14×12 主星亮度表。
+     *   仅表示当前采用的数据版本，不声称为唯一流派标准。
+     */
+    enum class MainStarBrightnessPolicy {
+        ZhouYiLabBuiltinV1 = 0
+    };
+
+    enum class LiuNianYearBoundaryPolicy {
+        LunarNewYear = 0,
+        LiChun
+    };
+
+    /**
+     * @brief 虚岁换岁边界
+     *
+     * LunarNewYear:
+     *   农历正月初一进入下一虚岁。
+     */
+    enum class VirtualAgeBoundaryPolicy {
+        LunarNewYear = 0
+    };
+
+    /**
+     * @brief 按目标日期计算虚岁
+     *
+     * 当前仅支持农历正月初一换岁：
+     * 虚岁 = 目标日期所属农历年 - 出生农历年 + 1
+     */
+    constexpr int calculate_virtual_age(
+        int birth_lunar_year,
+        int target_lunar_year,
+        VirtualAgeBoundaryPolicy policy =
+            VirtualAgeBoundaryPolicy::LunarNewYear
+    ) {
+        switch (policy) {
+            case VirtualAgeBoundaryPolicy::LunarNewYear:
+                return target_lunar_year - birth_lunar_year + 1;
+        }
+
+        return target_lunar_year - birth_lunar_year + 1;
+    }
+
+    /**
+     * @brief 紫微流月干支的来源
+     *
+     * LunarMonthWuHuDun:
+     *   与斗君农历流月一致，以农历月序配五虎遁月干。
+     *
+     * SolarTermMonthPillar:
+     *   使用节令月柱（立春寅月、惊蛰卯月……）。
+     */
+    enum class LiuYueGanZhiPolicy {
+        LunarMonthWuHuDun = 0,
+        SolarTermMonthPillar
+    };
+
+    /**
+     * @brief 按公历/农历纪年数字取得该年的干支
+     *
+     * 公元4年为甲子年。
+     * 该函数只负责“年份数字 -> 干支”，
+     * 至于目标日期究竟属于哪一个流年，由换年边界策略决定。
+     */
+    constexpr pair<GanZhi::TianGan, GanZhi::DiZhi>
+    get_year_gan_zhi_from_year(int year) {
+        auto positive_mod = [](int value, int mod) constexpr {
+            int r = value % mod;
+            return r < 0 ? r + mod : r;
+        };
+
+        return {
+            static_cast<GanZhi::TianGan>(
+                positive_mod(year - 4, 10)
+            ),
+            static_cast<GanZhi::DiZhi>(
+                positive_mod(year - 4, 12)
+            )
+        };
+    }
+
+    /**
+     * @brief 根据流年换年策略选择目标日期所属的流年年份
+     *
+     * @param lunar_year    目标日期所属农历年（正月初一换年）
+     * @param li_chun_year  目标日期所属节气干支年（立春换年）
+     */
+    constexpr int resolve_liu_nian_year(
+        int lunar_year,
+        int li_chun_year,
+        LiuNianYearBoundaryPolicy policy
+    ) {
+        return policy == LiuNianYearBoundaryPolicy::LunarNewYear
+            ? lunar_year
+            : li_chun_year;
+    }
+
+    /**
+     * @brief 按流年天干和紫微实际采用的农历月份计算流月干支
+     *
+     * 五虎遁：
+     * 甲己年丙作首
+     * 乙庚年戊为头
+     * 丙辛岁首寻庚起
+     * 丁壬壬位顺行流
+     * 若问戊癸何方发
+     * 甲寅之上好追求
+     *
+     * @param year_gan 流年天干
+     * @param lunar_month 紫微解析后的农历月份（1~12）
+     */
+    constexpr pair<GanZhi::TianGan, GanZhi::DiZhi> get_lunar_month_gan_zhi(
+        GanZhi::TianGan year_gan,
+        int lunar_month
+    ) {
+        if (lunar_month < 1 || lunar_month > 12) {
+            throw invalid_argument("农历月份必须在1到12之间");
+        }
+
+        int year_gan_index = static_cast<int>(year_gan);
+
+        // 正月月干：
+        // 甲己->丙(2)，乙庚->戊(4)，丙辛->庚(6)，
+        // 丁壬->壬(8)，戊癸->甲(0)
+        int first_month_gan =
+            ((year_gan_index % 5) * 2 + 2) % 10;
+
+        int month_gan_index =
+            (first_month_gan + lunar_month - 1) % 10;
+
+        // 正月寅(2)，二月卯(3)……十二月丑(1)
+        int month_zhi_index =
+            (lunar_month + 1) % 12;
+
+        return {
+            static_cast<GanZhi::TianGan>(month_gan_index),
+            static_cast<GanZhi::DiZhi>(month_zhi_index)
+        };
+    }
+
+    /**
+     * @brief 将 tyme 农历月份解析为紫微算法实际使用的月份（1~12）
+     *
+     * tyme 使用负数表示闰月，例如 -5 表示闰五月。
+     */
+    constexpr int resolve_ziwei_month(
+        int raw_lunar_month,
+        int lunar_day,
+        LeapMonthPolicy policy
+    ) {
+        int month = raw_lunar_month < 0
+            ? -raw_lunar_month
+            : raw_lunar_month;
+
+        if (month < 1 || month > 12) {
+            throw invalid_argument("农历月份必须在1到12之间");
+        }
+
+        if (lunar_day < 1 || lunar_day > 30) {
+            throw invalid_argument("农历日期必须在1到30之间");
+        }
+
+        // 非闰月不受策略影响
+        if (raw_lunar_month > 0) {
+            return month;
+        }
+
+        bool use_next_month =
+            policy == LeapMonthPolicy::NextMonth ||
+            (policy == LeapMonthPolicy::SplitAtDay15 && lunar_day >= 16);
+
+        return use_next_month
+            ? (month % 12) + 1
+            : month;
+    }
+
+    /**
      * @brief 主星（十四正曜）
      */
     enum class ZhuXing {

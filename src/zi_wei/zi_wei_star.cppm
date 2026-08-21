@@ -16,7 +16,7 @@ export namespace ZhouYi::ZiWei {
      */
     struct StarData {
         string name;            // 星耀名称
-        LiangDu liang_du;       // 亮度
+        optional<LiangDu> liang_du; // 亮度；无可靠规则时为空
         int gong_index;         // 所在宫位索引（以寅宫为0）
         optional<SiHua> si_hua; // 四化（可能没有）
         
@@ -184,12 +184,19 @@ export namespace ZhouYi::ZiWei {
     /**
      * @brief 安三台八座（按农历日和月份）
      */
-    pair<int, int> get_san_tai_ba_zuo_index(int lunar_month, int lunar_day, DiZhi hour_zhi);
+    pair<int, int> get_san_tai_ba_zuo_index(
+        int lunar_month,
+        int lunar_day
+    );
 
     /**
      * @brief 安恩光天贵（按农历日和时辰）
      */
-    pair<int, int> get_en_guang_tian_gui_index(int lunar_month, int lunar_day, DiZhi hour_zhi);
+    pair<int, int> get_en_guang_tian_gui_index(
+        int lunar_month,
+        int lunar_day,
+        DiZhi hour_zhi
+    );
 
     /**
      * @brief 安龙池凤阁（按年支）

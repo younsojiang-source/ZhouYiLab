@@ -120,27 +120,83 @@ export namespace ZhouYi::ZiWei {
     /**
      * @brief 显示流年分析
      */
-    void display_liu_nian_analysis(const ZiWeiResult& result, int target_year, int current_age);
+    void display_liu_nian_analysis(
+        const ZiWeiResult& result,
+        int target_year,
+        int current_age
+    );
+
+    void display_liu_nian_analysis(
+        const ZiWeiResult& result,
+        int target_year,
+        int target_month,
+        int target_day,
+        int current_age,
+        LiuNianYearBoundaryPolicy policy
+    );
     
     /**
      * @brief 显示流月分析
      */
-    void display_liu_yue_analysis(const ZiWeiResult& result, int target_year, int target_month, int current_age);
+    void display_liu_yue_analysis(
+        const ZiWeiResult& result,
+        int target_year,
+        int target_month,
+        int current_age
+    );
+
+    /**
+     * @brief 显示指定公历日期实际所属的流月分析
+     */
+    void display_liu_yue_analysis(
+        const ZiWeiResult& result,
+        int target_year,
+        int target_month,
+        int target_day,
+        int current_age,
+        LiuNianYearBoundaryPolicy year_boundary_policy
+    );
     
     /**
      * @brief 显示流日分析
      */
-    void display_liu_ri_analysis(const ZiWeiResult& result, int target_year, int target_month, int target_day, int current_age);
+    void display_liu_ri_analysis(
+        const ZiWeiResult& result,
+        int target_year,
+        int target_month,
+        int target_day,
+        int current_age,
+        LiuNianYearBoundaryPolicy year_boundary_policy =
+            LiuNianYearBoundaryPolicy::LunarNewYear
+    );
     
     /**
      * @brief 显示流时分析
      */
-    void display_liu_shi_analysis(const ZiWeiResult& result, int target_year, int target_month, int target_day, DiZhi target_hour, int current_age);
+    void display_liu_shi_analysis(
+        const ZiWeiResult& result,
+        int target_year,
+        int target_month,
+        int target_day,
+        DiZhi target_hour,
+        int current_age,
+        LiuNianYearBoundaryPolicy year_boundary_policy =
+            LiuNianYearBoundaryPolicy::LunarNewYear
+    );
     
     /**
      * @brief 显示完整运限分析（大限+流年+流月+流日+流时）
      */
-    void display_yun_xian_full_analysis(const ZiWeiResult& result, int target_year, int target_month, int target_day, DiZhi target_hour, int current_age);
+    void display_yun_xian_full_analysis(
+        const ZiWeiResult& result,
+        int target_year,
+        int target_month,
+        int target_day,
+        DiZhi target_hour,
+        int current_age,
+        LiuNianYearBoundaryPolicy year_boundary_policy =
+            LiuNianYearBoundaryPolicy::LunarNewYear
+    );
     
     // ============= 综合分析功能 =============
     
@@ -149,6 +205,49 @@ export namespace ZhouYi::ZiWei {
      */
     void display_full_analysis(const ZiWeiResult& result);
     
+    /**
+     * @brief 全时域紫微分析数据集选项
+     *
+     * 默认范围：
+     *   中心年前5年 ～ 中心年后8年，共14个公历年。
+     *
+     * 流时默认按24个公历小时输出，而不是压缩成12个代表时辰。
+     * 这样可以完整保留23:00晚子换日边界。
+     */
+    struct AnalysisDatasetOptions {
+        int years_before = 5;
+        int years_after = 8;
+
+        LiuNianYearBoundaryPolicy year_boundary_policy =
+            LiuNianYearBoundaryPolicy::LunarNewYear;
+
+        LiuYueGanZhiPolicy month_gan_zhi_policy =
+            LiuYueGanZhiPolicy::LunarMonthWuHuDun;
+
+        ZiHourDayBoundaryPolicy day_boundary_policy =
+            ZiHourDayBoundaryPolicy::Midnight;
+
+        VirtualAgeBoundaryPolicy virtual_age_boundary_policy =
+            VirtualAgeBoundaryPolicy::LunarNewYear;
+
+        bool include_hours = true;
+
+        // 2 = 易读缩进 JSON；-1 = 紧凑 JSON，不损失任何数据
+        int json_indent = 2;
+    };
+
+    /**
+     * @brief 导出前后多年、逐日逐小时的完整紫微运限数据集
+     *
+     * 时间轴统一调用 ZiWeiResult::get_horoscope()，
+     * 不在 Controller 中重复实现流年、流月、流日、流时算法。
+     */
+    string export_analysis_dataset(
+        const ZiWeiResult& result,
+        int center_year,
+        const AnalysisDatasetOptions& options = {}
+    );
+
     /**
      * @brief 导出为JSON格式（完整版，包含格局、四化等）
      */

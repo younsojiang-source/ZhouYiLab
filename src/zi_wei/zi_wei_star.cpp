@@ -15,10 +15,22 @@ namespace ZhouYi::ZiWei {
     // ============= StarData 实现 =============
 
     string StarData::to_string() const {
-        string result = fmt::format("{} [{}]", name, string(to_zh(liang_du)));
-        if (si_hua.has_value()) {
-            result += fmt::format(" {}", string(to_zh(*si_hua)));
+        string result = name;
+
+        if (liang_du.has_value()) {
+            result += fmt::format(
+                " [{}]",
+                string(to_zh(*liang_du))
+            );
         }
+
+        if (si_hua.has_value()) {
+            result += fmt::format(
+                " {}",
+                string(to_zh(*si_hua))
+            );
+        }
+
         return result;
     }
 
@@ -480,12 +492,14 @@ namespace ZhouYi::ZiWei {
      * 由左辅之宫位起初一，顺行至生日安三台。
      * 由右弼之宫位起初一，逆行至生日安八座。
      */
-    pair<int, int> get_san_tai_ba_zuo_index(int lunar_month, int lunar_day, DiZhi hour_zhi) {
-        auto [zuo_idx, you_idx] = get_zuo_you_index(lunar_month);
-        
-        // 晚子时需要加一天
-        int day_offset = (hour_zhi == DiZhi::Zi && static_cast<int>(hour_zhi) >= 12) ? 1 : 0;
-        int day_index = (lunar_day + day_offset - 1) % 12;
+    pair<int, int> get_san_tai_ba_zuo_index(
+        int lunar_month,
+        int lunar_day
+    ) {
+        auto [zuo_idx, you_idx] =
+            get_zuo_you_index(lunar_month);
+
+        int day_index = (lunar_day - 1) % 12;
         
         int san_tai_index = fix_index(zuo_idx + day_index);
         int ba_zuo_index = fix_index(you_idx - day_index);
@@ -500,11 +514,15 @@ namespace ZhouYi::ZiWei {
      * 由文昌之宫位起初一，顺行至生日再退一步起恩光。
      * 由文曲之宫位起初一，顺行至生日再退一步起天贵。
      */
-    pair<int, int> get_en_guang_tian_gui_index(int lunar_month, int lunar_day, DiZhi hour_zhi) {
-        auto [chang_idx, qu_idx] = get_chang_qu_index(hour_zhi);
-        
-        int day_offset = (hour_zhi == DiZhi::Zi && static_cast<int>(hour_zhi) >= 12) ? 1 : 0;
-        int day_index = (lunar_day + day_offset - 1) % 12;
+    pair<int, int> get_en_guang_tian_gui_index(
+        int lunar_month,
+        int lunar_day,
+        DiZhi hour_zhi
+    ) {
+        auto [chang_idx, qu_idx] =
+            get_chang_qu_index(hour_zhi);
+
+        int day_index = (lunar_day - 1) % 12;
         
         int en_guang_index = fix_index((chang_idx + day_index) - 1);
         int tian_gui_index = fix_index((qu_idx + day_index) - 1);

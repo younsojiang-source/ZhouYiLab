@@ -7,6 +7,7 @@ import ZhouYi.BaZiBase;
 import ZhouYi.ZiWei.Constants;
 import ZhouYi.ZiWei.Palace;
 import ZhouYi.ZiWei.Star;
+import ZhouYi.ZiWei.SiHua;
 import ZhouYi.ZiWei.Horoscope;
 import ZhouYi.ZhMapper;
 import ZhouYi.tyme;
@@ -137,6 +138,17 @@ export namespace ZhouYi::ZiWei {
         tyme::LunarDay lunar_day;        // 农历日期
         tyme::LunarHour lunar_hour;      // 农历时辰
         bool is_male;                    // 性别
+
+        // 闰月/月份策略元数据
+        LeapMonthPolicy leap_month_policy;   // 本盘采用的闰月策略
+        ZiHourDayBoundaryPolicy zi_hour_day_boundary_policy;
+        HuoLingPolicy huo_ling_policy;        // 火铃安置策略
+        MainStarBrightnessPolicy main_star_brightness_policy;
+        int raw_lunar_month;                 // 紫微实际采用日期的 tyme 原始月份，闰月为负数
+        int resolved_lunar_month;            // 紫微算法实际采用月份（1~12）
+        int resolved_lunar_day;              // 紫微算法实际采用农历日
+        bool zi_hour_shifted_to_next_day;    // 是否因晚子策略移至次日
+        bool is_leap_month;                  // 是否闰月
         
         // 四柱
         Pillar year_pillar;              // 年柱
@@ -177,21 +189,30 @@ export namespace ZhouYi::ZiWei {
         }
         
         /**
-         * @brief 获取指定虚岁的运限盘（天地人三盘）
-         * 
+         * @brief 获取指定公历时刻的综合运限结果
+         *
          * @param target_year 目标公历年份
-         * @param target_month 目标农历月份  
-         * @param target_day 目标农历日
-         * @param target_hour 目标时辰
+         * @param target_month 目标公历月份
+         * @param target_day 目标公历日
+         * @param target_hour 目标小时（0~23）
          * @param current_age 当前虚岁
-         * @return 运限结果（包含大限、小限、流年、流月、流日、流时）
+         * @param year_boundary_policy 流年换年边界
+         * @param month_gan_zhi_policy 流月干支来源
+         * @param day_boundary_policy 流日子时换日策略
+         * @return 大限、小限、流年、流月、流日、流时综合结果
          */
         HoroscopeResult get_horoscope(
             int target_year,
             int target_month,
             int target_day,
-            DiZhi target_hour,
-            int current_age
+            int target_hour,
+            int current_age,
+            LiuNianYearBoundaryPolicy year_boundary_policy =
+                LiuNianYearBoundaryPolicy::LunarNewYear,
+            LiuYueGanZhiPolicy month_gan_zhi_policy =
+                LiuYueGanZhiPolicy::LunarMonthWuHuDun,
+            ZiHourDayBoundaryPolicy day_boundary_policy =
+                ZiHourDayBoundaryPolicy::Midnight
         ) const;
         
         /**
@@ -234,6 +255,233 @@ export namespace ZhouYi::ZiWei {
         }
     };
 
+    inline HoroscopeResult ZiWeiResult::get_horoscope(
+        int target_year,
+        int target_month,
+        int target_day,
+        int target_hour,
+        int current_age,
+        LiuNianYearBoundaryPolicy year_boundary_policy,
+        LiuYueGanZhiPolicy month_gan_zhi_policy,
+        ZiHourDayBoundaryPolicy day_boundary_policy
+    ) const {
+        if (target_hour < 0 || target_hour > 23) {
+            throw invalid_argument("target_hour 必须在 0~23 之间");
+        }
+
+        if (current_age <= 0) {
+            throw invalid_argument("current_age 必须为正虚岁");
+        }
+
+        // 原始目标公历日期。
+        tyme::SolarDay target_solar_day =
+            tyme::SolarDay::from_ymd(
+                target_year,
+                target_month,
+                target_day
+            );
+
+        // 晚子策略：23:00 起，流年/月/日统一采用真实次日日期。
+        bool shift_to_next_day =
+            day_boundary_policy ==
+                ZiHourDayBoundaryPolicy::LateZi &&
+            target_hour == 23;
+
+        tyme::SolarDay effective_solar_day =
+            shift_to_next_day
+                ? target_solar_day.next(1)
+                : target_solar_day;
+
+        auto effective_lunar_day =
+            effective_solar_day.get_lunar_day();
+
+        // ---------- 当前大限 ----------
+        optional<DaXianData> current_da_xian;
+
+        for (const auto& da_xian : da_xian_data) {
+            if (current_age >= da_xian.start_age &&
+                current_age <= da_xian.end_age) {
+                current_da_xian = da_xian;
+                break;
+            }
+        }
+
+        // ---------- 小限 ----------
+        XiaoXianData xiao_xian =
+            get_xiao_xian(
+                current_age,
+                is_male,
+                year_pillar.zhi
+            );
+
+        // ---------- 流年 ----------
+        auto sixty_cycle_day =
+            effective_solar_day.get_sixty_cycle_day();
+
+        int lunar_year =
+            effective_lunar_day.get_year();
+
+        int li_chun_year =
+            sixty_cycle_day
+                .get_sixty_cycle_month()
+                .get_sixty_cycle_year()
+                .get_year();
+
+        int effective_year =
+            resolve_liu_nian_year(
+                lunar_year,
+                li_chun_year,
+                year_boundary_policy
+            );
+
+        auto [year_gan, year_zhi] =
+            get_year_gan_zhi_from_year(effective_year);
+
+        LiuNianData liu_nian =
+            get_liu_nian(
+                effective_year,
+                year_gan,
+                year_zhi,
+                ming_gong_index
+            );
+
+        // ---------- 流月 ----------
+        int raw_lunar_month =
+            effective_lunar_day.get_month();
+
+        int effective_lunar_month =
+            resolve_ziwei_month(
+                raw_lunar_month,
+                effective_lunar_day.get_day(),
+                leap_month_policy
+            );
+
+        auto month_cycle =
+            sixty_cycle_day.get_month();
+
+        TianGan solar_term_month_gan =
+            static_cast<TianGan>(
+                month_cycle
+                    .get_heaven_stem()
+                    .get_index()
+            );
+
+        DiZhi solar_term_month_zhi =
+            static_cast<DiZhi>(
+                month_cycle
+                    .get_earth_branch()
+                    .get_index()
+            );
+
+        LiuYueData liu_yue =
+            get_liu_yue(
+                effective_lunar_month,
+                resolved_lunar_month,
+                hour_pillar.zhi,
+                year_gan,
+                year_zhi,
+                month_gan_zhi_policy,
+                solar_term_month_gan,
+                solar_term_month_zhi
+            );
+
+        // ---------- 流日 ----------
+        auto day_cycle =
+            sixty_cycle_day.get_sixty_cycle();
+
+        TianGan day_gan =
+            static_cast<TianGan>(
+                day_cycle
+                    .get_heaven_stem()
+                    .get_index()
+            );
+
+        DiZhi day_zhi =
+            static_cast<DiZhi>(
+                day_cycle
+                    .get_earth_branch()
+                    .get_index()
+            );
+
+        LiuRiData liu_ri =
+            get_liu_ri(
+                effective_lunar_day.get_day(),
+                day_gan,
+                day_zhi,
+                liu_yue.gong_index
+            );
+
+        // ---------- 流时 ----------
+        // 0/23 点均属子时，1/2 点属丑时，以此类推。
+        int hour_zhi_index =
+            ((target_hour + 1) / 2) % 12;
+
+        DiZhi hour_zhi =
+            static_cast<DiZhi>(hour_zhi_index);
+
+        // 五鼠遁日起时。
+        // 晚子策略下使用 effective_solar_day 的日干，
+        // 因而 23:00 可显式归属次日子时。
+        int day_gan_index =
+            static_cast<int>(day_gan);
+
+        int hour_gan_index =
+            (
+                (day_gan_index % 5) * 2 +
+                hour_zhi_index
+            ) % 10;
+
+        TianGan hour_gan =
+            static_cast<TianGan>(hour_gan_index);
+
+        LiuShiData liu_shi =
+            get_liu_shi(
+                hour_zhi,
+                hour_gan,
+                liu_ri.gong_index
+            );
+
+        // 动态流耀星规则仍按层级审定。
+        // 当前仅流年层已通过独立回归测试。
+        array<HoroscopeStarData, 12> empty_stars{};
+
+        for (int i = 0; i < 12; ++i) {
+            empty_stars[i].gong_index = i;
+        }
+
+        auto da_xian_stars = empty_stars;
+
+        if (current_da_xian.has_value()) {
+            da_xian_stars =
+                get_horoscope_stars(
+                    current_da_xian->tian_gan,
+                    current_da_xian->di_zhi,
+                    Scope::Decadal
+                );
+        }
+
+        auto liu_nian_stars =
+            get_horoscope_stars(
+                liu_nian.tian_gan,
+                liu_nian.di_zhi,
+                Scope::Yearly
+            );
+
+        return HoroscopeResult{
+            .da_xian = current_da_xian,
+            .xiao_xian = xiao_xian,
+            .liu_nian = liu_nian,
+            .liu_yue = liu_yue,
+            .liu_ri = liu_ri,
+            .liu_shi = liu_shi,
+            .da_xian_stars = da_xian_stars,
+            .liu_nian_stars = liu_nian_stars,
+            .liu_yue_stars = empty_stars,
+            .liu_ri_stars = empty_stars,
+            .liu_shi_stars = empty_stars
+        };
+    }
+
     /**
      * @brief 紫微斗数排盘（阳历）
      * 
@@ -245,15 +493,42 @@ export namespace ZhouYi::ZiWei {
      * @return 排盘结果
      */
     inline ZiWeiResult pai_pan_solar(
-        int year, int month, int day, int hour, bool is_male
+        int year,
+        int month,
+        int day,
+        int hour,
+        bool is_male,
+        LeapMonthPolicy leap_month_policy = LeapMonthPolicy::SameAsRegularMonth,
+        ZiHourDayBoundaryPolicy zi_hour_day_boundary_policy =
+            ZiHourDayBoundaryPolicy::Midnight
     ) {
-        // 创建阳历日期
-        tyme::SolarDay solar_day = tyme::SolarDay::from_ymd(year, month, day);
-        
+        // 创建原始阳历日期
+        tyme::SolarDay solar_day =
+            tyme::SolarDay::from_ymd(year, month, day);
+
+        // 晚子时策略只决定紫微本命安宫/安星所采用的日期。
+        // 八字仍保持 tyme 原生规则，避免在这里混入另一套日柱策略。
+        bool zi_hour_shifted_to_next_day =
+            zi_hour_day_boundary_policy ==
+                ZiHourDayBoundaryPolicy::LateZi &&
+            hour == 23;
+
+        tyme::SolarDay effective_solar_day =
+            zi_hour_shifted_to_next_day
+                ? solar_day.next(1)
+                : solar_day;
+
         // 转换为农历并获取四柱
-        auto solar_time = tyme::SolarTime::from_ymd_hms(year, month, day, hour, 0, 0);
-        tyme::LunarDay lunar_day = solar_day.get_lunar_day();
-        tyme::LunarHour lunar_hour = solar_time.get_lunar_hour();
+        auto solar_time =
+            tyme::SolarTime::from_ymd_hms(
+                year, month, day, hour, 0, 0
+            );
+
+        tyme::LunarDay lunar_day =
+            effective_solar_day.get_lunar_day();
+
+        tyme::LunarHour lunar_hour =
+            solar_time.get_lunar_hour();
         tyme::EightChar bazi = lunar_hour.get_eight_char();
          
         // 转换为我们的 Pillar 类型
@@ -270,8 +545,17 @@ export namespace ZhouYi::ZiWei {
         Pillar hour_pillar = convert_cycle(bazi.get_hour());
         
         // 获取农历月份和日期
-        int lunar_month = lunar_day.get_month();
+        // tyme 使用负数月份表示闰月，例如 -5 表示闰五月。
+        int raw_lunar_month = lunar_day.get_month();
         int lunar_day_num = lunar_day.get_day();
+        bool is_leap_month = raw_lunar_month < 0;
+
+        // 本命安宫、安星统一使用显式闰月策略解析后的月份。
+        int lunar_month = resolve_ziwei_month(
+            raw_lunar_month,
+            lunar_day_num,
+            leap_month_policy
+        );
         
         // 获取时辰地支
         DiZhi hour_zhi = hour_pillar.zhi;
@@ -304,8 +588,17 @@ export namespace ZhouYi::ZiWei {
         auto zi_wei_group = arrange_zi_wei_group(zi_wei_idx);
         auto tian_fu_group = arrange_tian_fu_group(tian_fu_idx);
         
-        // 获取四化表
-        auto si_hua_table = get_si_hua_table(year_pillar.gan);
+        // 获取完整本命四化（禄、权、科、忌），同时支持主星和辅星
+        auto si_hua_star_names = get_si_hua_star_names(year_pillar.gan);
+
+        auto get_ben_ming_si_hua = [&](const string& star_name) -> optional<SiHua> {
+            for (int i = 0; i < 4; ++i) {
+                if (si_hua_star_names[i] == star_name) {
+                    return static_cast<SiHua>(i);
+                }
+            }
+            return nullopt;
+        };
         
         // 安辅星
         auto [zuo_idx, you_idx] = get_zuo_you_index(lunar_month);
@@ -339,8 +632,18 @@ export namespace ZhouYi::ZiWei {
         int tian_ma_idx = get_tian_ma_index(year_pillar.zhi);
         
         // 吉星
-        auto [san_tai_idx, ba_zuo_idx] = get_san_tai_ba_zuo_index(lunar_month, lunar_day_num, hour_zhi);
-        auto [en_guang_idx, tian_gui_idx] = get_en_guang_tian_gui_index(lunar_month, lunar_day_num, hour_zhi);
+        auto [san_tai_idx, ba_zuo_idx] =
+            get_san_tai_ba_zuo_index(
+                lunar_month,
+                lunar_day_num
+            );
+
+        auto [en_guang_idx, tian_gui_idx] =
+            get_en_guang_tian_gui_index(
+                lunar_month,
+                lunar_day_num,
+                hour_zhi
+            );
         auto [long_chi_idx, feng_ge_idx] = get_long_chi_feng_ge_index(year_pillar.zhi);
         auto [tian_cai_idx, tian_shou_idx] = get_tian_cai_tian_shou_index(year_pillar.zhi, ming_index, shen_index);
         auto [tai_fu_idx, feng_gao_idx] = get_tai_fu_feng_gao_index(hour_zhi);
@@ -373,7 +676,13 @@ export namespace ZhouYi::ZiWei {
         auto jiang_qian_arr = arrange_jiang_qian_12(year_pillar.zhi);
         
         // ============= 安大限 =============
-        auto da_xian_arr = arrange_da_xian(ming_index, wu_xing_ju, is_male, year_pillar.zhi);
+        auto da_xian_arr = arrange_da_xian(
+            ming_index,
+            wu_xing_ju,
+            is_male,
+            year_pillar.zhi,
+            palaces
+        );
         
         // 创建结果对象（使用聚合初始化）
         ZiWeiResult result{
@@ -381,6 +690,19 @@ export namespace ZhouYi::ZiWei {
             .lunar_day = lunar_day,
             .lunar_hour = lunar_hour,
             .is_male = is_male,
+            .leap_month_policy = leap_month_policy,
+            .zi_hour_day_boundary_policy =
+                zi_hour_day_boundary_policy,
+            .huo_ling_policy =
+                HuoLingPolicy::YearBranchStartBothForward,
+            .main_star_brightness_policy =
+                MainStarBrightnessPolicy::ZhouYiLabBuiltinV1,
+            .raw_lunar_month = raw_lunar_month,
+            .resolved_lunar_month = lunar_month,
+            .resolved_lunar_day = lunar_day_num,
+            .zi_hour_shifted_to_next_day =
+                zi_hour_shifted_to_next_day,
+            .is_leap_month = is_leap_month,
             .year_pillar = year_pillar,
             .month_pillar = month_pillar,
             .day_pillar = day_pillar,
@@ -410,10 +732,8 @@ export namespace ZhouYi::ZiWei {
                     star_data.liang_du = liang_du_table[i];
                     star_data.gong_index = i; 
                     
-                    // 检查四化
-                    if (si_hua_table.contains(star)) {
-                        star_data.si_hua = si_hua_table[star];
-                    }
+                    // 检查本命四化
+                    star_data.si_hua = get_ben_ming_si_hua(star_data.name);
                     
                     palace_info.zhu_xing.push_back(star_data);
                 }
@@ -428,10 +748,8 @@ export namespace ZhouYi::ZiWei {
                     star_data.liang_du = liang_du_table[i];
                     star_data.gong_index = i;
                     
-                    // 检查四化
-                    if (si_hua_table.contains(star)) {
-                        star_data.si_hua = si_hua_table[star];
-                    }
+                    // 检查本命四化
+                    star_data.si_hua = get_ben_ming_si_hua(star_data.name);
                     
                     palace_info.zhu_xing.push_back(star_data);
                 }
@@ -441,42 +759,46 @@ export namespace ZhouYi::ZiWei {
             if (i == zuo_idx) {
                 palace_info.fu_xing.push_back(StarData{
                     .name = string(to_zh(FuXing::ZuoFu)),
-                    .liang_du = LiangDu::Ping,
-                    .gong_index = i
+                    .liang_du = nullopt,
+                    .gong_index = i,
+                    .si_hua = get_ben_ming_si_hua(string(to_zh(FuXing::ZuoFu)))
                 });
             }
             if (i == you_idx) {
                 palace_info.fu_xing.push_back(StarData{
                     .name = string(to_zh(FuXing::YouBi)),
-                    .liang_du = LiangDu::Ping,
-                    .gong_index = i
+                    .liang_du = nullopt,
+                    .gong_index = i,
+                    .si_hua = get_ben_ming_si_hua(string(to_zh(FuXing::YouBi)))
                 });
             }
             if (i == chang_idx) {
                 palace_info.fu_xing.push_back(StarData{
                     .name = string(to_zh(FuXing::WenChang)),
-                    .liang_du = LiangDu::Ping,
-                    .gong_index = i
+                    .liang_du = nullopt,
+                    .gong_index = i,
+                    .si_hua = get_ben_ming_si_hua(string(to_zh(FuXing::WenChang)))
                 });
             }
             if (i == qu_idx) {
                 palace_info.fu_xing.push_back(StarData{
                     .name = string(to_zh(FuXing::WenQu)),
-                    .liang_du = LiangDu::Ping,
-                    .gong_index = i
+                    .liang_du = nullopt,
+                    .gong_index = i,
+                    .si_hua = get_ben_ming_si_hua(string(to_zh(FuXing::WenQu)))
                 });
             }
             if (i == kui_idx) {
                 palace_info.fu_xing.push_back(StarData{
                     .name = string(to_zh(FuXing::TianKui)),
-                    .liang_du = LiangDu::Ping,
+                    .liang_du = nullopt,
                     .gong_index = i
                 });
             }
             if (i == yue_idx) {
                 palace_info.fu_xing.push_back(StarData{
                     .name = string(to_zh(FuXing::TianYue)),
-                    .liang_du = LiangDu::Ping,
+                    .liang_du = nullopt,
                     .gong_index = i
                 });
             }
@@ -484,7 +806,7 @@ export namespace ZhouYi::ZiWei {
             if (i == lu_cun_idx) {
                 palace_info.fu_xing.push_back(StarData{
                     .name = "禄存",
-                    .liang_du = LiangDu::Ping,
+                    .liang_du = nullopt,
                     .gong_index = i
                 });
             }
@@ -493,42 +815,42 @@ export namespace ZhouYi::ZiWei {
             if (i == yang_idx) {
                 palace_info.sha_xing.push_back(StarData{
                     .name = string(to_zh(ShaXing::QingYang)),
-                    .liang_du = LiangDu::Ping,
+                    .liang_du = nullopt,
                     .gong_index = i
                 });
             }
             if (i == tuo_idx) {
                 palace_info.sha_xing.push_back(StarData{
                     .name = string(to_zh(ShaXing::TuoLuo)),
-                    .liang_du = LiangDu::Ping,
+                    .liang_du = nullopt,
                     .gong_index = i
                 });
             }
             if (i == huo_idx) {
                 palace_info.sha_xing.push_back(StarData{
                     .name = string(to_zh(ShaXing::HuoXing)),
-                    .liang_du = LiangDu::Ping,
+                    .liang_du = nullopt,
                     .gong_index = i
                 });
             }
             if (i == ling_idx) {
                 palace_info.sha_xing.push_back(StarData{
                     .name = string(to_zh(ShaXing::LingXing)),
-                    .liang_du = LiangDu::Ping,
+                    .liang_du = nullopt,
                     .gong_index = i
                 });
             }
             if (i == kong_idx) {
                 palace_info.sha_xing.push_back(StarData{
                     .name = string(to_zh(ShaXing::DiKong)),
-                    .liang_du = LiangDu::Ping,
+                    .liang_du = nullopt,
                     .gong_index = i
                 });
             }
             if (i == jie_idx) {
                 palace_info.sha_xing.push_back(StarData{
                     .name = string(to_zh(ShaXing::DiJie)),
-                    .liang_du = LiangDu::Ping,
+                    .liang_du = nullopt,
                     .gong_index = i
                 });
             }
@@ -537,28 +859,28 @@ export namespace ZhouYi::ZiWei {
             if (i == hong_luan_idx) {
                 palace_info.za_yao.push_back(StarData{
                     .name = string(to_zh(ZaYao::HongLuan)),
-                    .liang_du = LiangDu::Ping,
+                    .liang_du = nullopt,
                     .gong_index = i
                 });
             }
             if (i == tian_xi_idx) {
                 palace_info.za_yao.push_back(StarData{
                     .name = string(to_zh(ZaYao::TianXi)),
-                    .liang_du = LiangDu::Ping,
+                    .liang_du = nullopt,
                     .gong_index = i
                 });
             }
             if (i == tian_yao_idx) {
                 palace_info.za_yao.push_back(StarData{
                     .name = string(to_zh(ZaYao::TianYao)),
-                    .liang_du = LiangDu::Ping,
+                    .liang_du = nullopt,
                     .gong_index = i
                 });
             }
             if (i == xian_chi_idx) {
                 palace_info.za_yao.push_back(StarData{
                     .name = string(to_zh(ZaYao::XianChi)),
-                    .liang_du = LiangDu::Ping,
+                    .liang_du = nullopt,
                     .gong_index = i
                 });
             }
@@ -567,42 +889,42 @@ export namespace ZhouYi::ZiWei {
             if (i == jie_shen_idx) {
                 palace_info.za_yao.push_back(StarData{
                     .name = string(to_zh(ZaYao::JieShen)),
-                    .liang_du = LiangDu::Ping,
+                    .liang_du = nullopt,
                     .gong_index = i
                 });
             }
             if (i == tian_wu_idx) {
                 palace_info.za_yao.push_back(StarData{
                     .name = string(to_zh(ZaYao::TianWu)),
-                    .liang_du = LiangDu::Ping,
+                    .liang_du = nullopt,
                     .gong_index = i
                 });
             }
             if (i == tian_guan_idx) {
                 palace_info.za_yao.push_back(StarData{
                     .name = string(to_zh(ZaYao::TianGuan)),
-                    .liang_du = LiangDu::Ping,
+                    .liang_du = nullopt,
                     .gong_index = i
                 });
             }
             if (i == tian_fu2_idx) {
                 palace_info.za_yao.push_back(StarData{
                     .name = string(to_zh(ZaYao::TianFu2)),
-                    .liang_du = LiangDu::Ping,
+                    .liang_du = nullopt,
                     .gong_index = i
                 });
             }
             if (i == tian_chu_idx) {
                 palace_info.za_yao.push_back(StarData{
                     .name = string(to_zh(ZaYao::TianChu)),
-                    .liang_du = LiangDu::Ping,
+                    .liang_du = nullopt,
                     .gong_index = i
                 });
             }
             if (i == tian_ma_idx) {
                 palace_info.za_yao.push_back(StarData{
                     .name = string(to_zh(ZaYao::TianMa)),
-                    .liang_du = LiangDu::Ping,
+                    .liang_du = nullopt,
                     .gong_index = i
                 });
             }
@@ -611,98 +933,98 @@ export namespace ZhouYi::ZiWei {
             if (i == san_tai_idx) {
                 palace_info.za_yao.push_back(StarData{
                     .name = string(to_zh(ZaYao::SanTai)),
-                    .liang_du = LiangDu::Ping,
+                    .liang_du = nullopt,
                     .gong_index = i
                 });
             }
             if (i == ba_zuo_idx) {
                 palace_info.za_yao.push_back(StarData{
                     .name = string(to_zh(ZaYao::BaZuo)),
-                    .liang_du = LiangDu::Ping,
+                    .liang_du = nullopt,
                     .gong_index = i
                 });
             }
             if (i == en_guang_idx) {
                 palace_info.za_yao.push_back(StarData{
                     .name = string(to_zh(ZaYao::EnGuang)),
-                    .liang_du = LiangDu::Ping,
+                    .liang_du = nullopt,
                     .gong_index = i
                 });
             }
             if (i == tian_gui_idx) {
                 palace_info.za_yao.push_back(StarData{
                     .name = string(to_zh(ZaYao::TianGui)),
-                    .liang_du = LiangDu::Ping,
+                    .liang_du = nullopt,
                     .gong_index = i
                 });
             }
             if (i == long_chi_idx) {
                 palace_info.za_yao.push_back(StarData{
                     .name = string(to_zh(ZaYao::LongChi)),
-                    .liang_du = LiangDu::Ping,
+                    .liang_du = nullopt,
                     .gong_index = i
                 });
             }
             if (i == feng_ge_idx) {
                 palace_info.za_yao.push_back(StarData{
                     .name = string(to_zh(ZaYao::FengGe)),
-                    .liang_du = LiangDu::Ping,
+                    .liang_du = nullopt,
                     .gong_index = i
                 });
             }
             if (i == tian_cai_idx) {
                 palace_info.za_yao.push_back(StarData{
                     .name = string(to_zh(ZaYao::TianCai)),
-                    .liang_du = LiangDu::Ping,
+                    .liang_du = nullopt,
                     .gong_index = i
                 });
             }
             if (i == tian_shou_idx) {
                 palace_info.za_yao.push_back(StarData{
                     .name = string(to_zh(ZaYao::TianShou)),
-                    .liang_du = LiangDu::Ping,
+                    .liang_du = nullopt,
                     .gong_index = i
                 });
             }
             if (i == tai_fu_idx) {
                 palace_info.za_yao.push_back(StarData{
                     .name = string(to_zh(ZaYao::TaiFu)),
-                    .liang_du = LiangDu::Ping,
+                    .liang_du = nullopt,
                     .gong_index = i
                 });
             }
             if (i == feng_gao_idx) {
                 palace_info.za_yao.push_back(StarData{
                     .name = string(to_zh(ZaYao::FengGao)),
-                    .liang_du = LiangDu::Ping,
+                    .liang_du = nullopt,
                     .gong_index = i
                 });
             }
             if (i == hua_gai_idx) {
                 palace_info.za_yao.push_back(StarData{
                     .name = string(to_zh(ZaYao::HuaGai)),
-                    .liang_du = LiangDu::Ping,
+                    .liang_du = nullopt,
                     .gong_index = i
                 });
             }
             if (i == tian_yue2_idx) {
                 palace_info.za_yao.push_back(StarData{
                     .name = string(to_zh(ZaYao::TianYue2)),
-                    .liang_du = LiangDu::Ping,
+                    .liang_du = nullopt,
                     .gong_index = i
                 });
             }
             if (i == tian_de_idx) {
                 palace_info.za_yao.push_back(StarData{
                     .name = string(to_zh(ZaYao::TianDe)),
-                    .liang_du = LiangDu::Ping,
+                    .liang_du = nullopt,
                     .gong_index = i
                 });
             }
             if (i == yue_de_idx) {
                 palace_info.za_yao.push_back(StarData{
                     .name = string(to_zh(ZaYao::YueDe)),
-                    .liang_du = LiangDu::Ping,
+                    .liang_du = nullopt,
                     .gong_index = i
                 });
             }
@@ -711,119 +1033,119 @@ export namespace ZhouYi::ZiWei {
             if (i == gu_chen_idx) {
                 palace_info.za_yao.push_back(StarData{
                     .name = string(to_zh(ZaYao::GuChen)),
-                    .liang_du = LiangDu::Ping,
+                    .liang_du = nullopt,
                     .gong_index = i
                 });
             }
             if (i == gua_su_idx) {
                 palace_info.za_yao.push_back(StarData{
                     .name = string(to_zh(ZaYao::GuaSu)),
-                    .liang_du = LiangDu::Ping,
+                    .liang_du = nullopt,
                     .gong_index = i
                 });
             }
             if (i == fei_lian_idx) {
                 palace_info.za_yao.push_back(StarData{
                     .name = string(to_zh(ZaYao::FeiLian)),
-                    .liang_du = LiangDu::Ping,
+                    .liang_du = nullopt,
                     .gong_index = i
                 });
             }
             if (i == po_sui_idx) {
                 palace_info.za_yao.push_back(StarData{
                     .name = string(to_zh(ZaYao::PoSui)),
-                    .liang_du = LiangDu::Ping,
+                    .liang_du = nullopt,
                     .gong_index = i
                 });
             }
             if (i == tian_xing_idx) {
                 palace_info.za_yao.push_back(StarData{
                     .name = string(to_zh(ZaYao::TianXing)),
-                    .liang_du = LiangDu::Ping,
+                    .liang_du = nullopt,
                     .gong_index = i
                 });
             }
             if (i == yin_sha_idx) {
                 palace_info.za_yao.push_back(StarData{
                     .name = string(to_zh(ZaYao::YinSha)),
-                    .liang_du = LiangDu::Ping,
+                    .liang_du = nullopt,
                     .gong_index = i
                 });
             }
             if (i == tian_kong2_idx) {
                 palace_info.za_yao.push_back(StarData{
                     .name = string(to_zh(ZaYao::TianKong2)),
-                    .liang_du = LiangDu::Ping,
+                    .liang_du = nullopt,
                     .gong_index = i
                 });
             }
             if (i == tian_ku_idx) {
                 palace_info.za_yao.push_back(StarData{
                     .name = string(to_zh(ZaYao::TianKu)),
-                    .liang_du = LiangDu::Ping,
+                    .liang_du = nullopt,
                     .gong_index = i
                 });
             }
             if (i == tian_xu_idx) {
                 palace_info.za_yao.push_back(StarData{
                     .name = string(to_zh(ZaYao::TianXu)),
-                    .liang_du = LiangDu::Ping,
+                    .liang_du = nullopt,
                     .gong_index = i
                 });
             }
             if (i == tian_shi_idx) {
                 palace_info.za_yao.push_back(StarData{
                     .name = string(to_zh(ZaYao::TianShi)),
-                    .liang_du = LiangDu::Ping,
+                    .liang_du = nullopt,
                     .gong_index = i
                 });
             }
             if (i == tian_shang_idx) {
                 palace_info.za_yao.push_back(StarData{
                     .name = string(to_zh(ZaYao::TianShang)),
-                    .liang_du = LiangDu::Ping,
+                    .liang_du = nullopt,
                     .gong_index = i
                 });
             }
             if (i == nian_jie_idx) {
                 palace_info.za_yao.push_back(StarData{
                     .name = string(to_zh(ZaYao::NianJie)),
-                    .liang_du = LiangDu::Ping,
+                    .liang_du = nullopt,
                     .gong_index = i
                 });
             }
             if (i == xun_kong1_idx || i == xun_kong2_idx) {
                 palace_info.za_yao.push_back(StarData{
                     .name = string(to_zh(ZaYao::XunKong)),
-                    .liang_du = LiangDu::Ping,
+                    .liang_du = nullopt,
                     .gong_index = i
                 });
             }
             if (i == jie_lu_idx) {
                 palace_info.za_yao.push_back(StarData{
                     .name = string(to_zh(ZaYao::JieLu)),
-                    .liang_du = LiangDu::Ping,
+                    .liang_du = nullopt,
                     .gong_index = i
                 });
             }
             if (i == kong_wang_idx) {
                 palace_info.za_yao.push_back(StarData{
                     .name = string(to_zh(ZaYao::KongWang)),
-                    .liang_du = LiangDu::Ping,
+                    .liang_du = nullopt,
                     .gong_index = i
                 });
             }
             if (i == da_hao_idx) {
                 palace_info.za_yao.push_back(StarData{
                     .name = string(to_zh(ZaYao::DaHao)),
-                    .liang_du = LiangDu::Xian,  // 大耗一般为陷
+                    .liang_du = nullopt,
                     .gong_index = i
                 });
             }
             if (i == long_de2_idx) {
                 palace_info.za_yao.push_back(StarData{
                     .name = string(to_zh(ZaYao::LongDe2)),
-                    .liang_du = LiangDu::Ping,
+                    .liang_du = nullopt,
                     .gong_index = i
                 });
             }
@@ -911,11 +1233,20 @@ export namespace ZhouYi::ZiWei {
      * @return 排盘结果
      */
     inline ZiWeiResult pai_pan_lunar(
-        int year, int month, int day, int hour, 
-        bool is_male, bool is_leap_month = false
+        int year,
+        int month,
+        int day,
+        int hour,
+        bool is_male,
+        bool is_leap_month = false,
+        LeapMonthPolicy leap_month_policy = LeapMonthPolicy::SameAsRegularMonth,
+        ZiHourDayBoundaryPolicy zi_hour_day_boundary_policy =
+            ZiHourDayBoundaryPolicy::Midnight
     ) {
         // 创建农历日期
-        tyme::LunarDay lunar_day = tyme::LunarDay::from_ymd(year, month, day);
+        // tyme 约定负数月份表示闰月，例如 -5 表示闰五月。
+        int tyme_month = is_leap_month ? -std::abs(month) : std::abs(month);
+        tyme::LunarDay lunar_day = tyme::LunarDay::from_ymd(year, tyme_month, day);
         
         // 转换为阳历
         tyme::SolarDay solar_day = lunar_day.get_solar_day();
@@ -925,8 +1256,10 @@ export namespace ZhouYi::ZiWei {
             solar_day.get_year(), 
             solar_day.get_month(), 
             solar_day.get_day(),
-            hour, 
-            is_male
+            hour,
+            is_male,
+            leap_month_policy,
+            zi_hour_day_boundary_policy
         );
     }
 

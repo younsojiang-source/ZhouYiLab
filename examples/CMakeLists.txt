@@ -35,7 +35,9 @@ set(EXAMPLES
     example_ba_zi       # "八字排盘示例"
     example_da_liu_ren  # "大六壬起课示例"
     example_liu_yao     # "六爻起卦示例"
-    example_zi_wei      # "紫微斗数排盘示例"
+    example_zi_wei           # "紫微斗数排盘示例"
+    zi_wei_export_dataset    # "紫微斗数全量分析数据集导出"
+    test_zi_wei_core         # "紫微斗数核心算法测试"
     example_stacktrace  # "std::stacktrace 功能测试"
     example_qi_men      # "奇门遁甲排盘示例"
 )
